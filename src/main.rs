@@ -1,47 +1,77 @@
-use std::env;
 
-use serenity::async_trait;
-use serenity::model::channel::Message;
-use serenity::model::gateway::Ready;
-use serenity::prelude::*;
+mod commands;
+mod scrapers;
 
-struct Handler;
+use poise::serenity_prelude as serenity;
+use std::env::var;
 
-#[async_trait]
-impl EventHandler for Handler {
-    //Handler for the `message` event.
-    //Handlers are dispatched through a threadpool allowing for concurrency
-    
-    async fn message(&self, ctx: Context, msg: Message) {
-        if msg.content == "!ping" {
-            if let Err(why) = msg.channel_id.say(&ctx.http, "Pong!").await {
-                println!("Error sending message: {why:?}");
+type Error = Box<dyn std::error::Error + Send + Sync>;
+type Context<'a> = poise::Context<'a, (), Error>;
+
+async fn on_error(error: poise::FrameworkError<'_, (), Error>) {
+    //Custom error handler
+    match error {
+        poise::FrameworkError::Setup { error, .. } => panic!("Failed to start bot: {:?}", error),
+        poise::FrameworkError::Command { error, ctx, .. } => {
+            println!("Error in command: `{}`: {:?}", ctx.command().name, error,);
+        }
+        error => {
+            if let Err(e) = poise::builtins::on_error(error).await {
+                println!("Error while handling error: {}", e)
             }
         }
-    }
-
-    //Set a handler for the `ready` event when the bot is booted
-    async fn ready(&self, _: Context, ready: Ready) {
-        println!("{} is connected!", ready.user.name);
     }
 }
 
 #[tokio::main]
 async fn main() {
     //Initialize .env
-    dotenvy::dotenv().ok();     
+    dotenvy::dotenv().ok();
 
-    let token = env::var("DISCORD_TOKEN").expect("Expected a token in the environment.");
+    let options = poise::FrameworkOptions {
+        commands: vec![commands::scrape::scrape()],
+        on_error: |error| Box::pin(on_error(error)),
+        pre_command: |ctx| {
+            Box::pin(async move {
+                println!("Executing command {}...", ctx.command().qualified_name);
+            })
+        },
+        post_command: |ctx| {
+            Box::pin(async move {
+                println!("Executed command {}!", ctx.command().qualified_name);
+            })
+        },
+        event_handler: |_ctx, event, _framework, _data| {
+            Box::pin(async move {
+                println!(
+                    "Got an event in event handler: {:?}",
+                    event.snake_case_name()
+                );
+                Ok(())
+            })
+        },
+        ..Default::default()
+    };
 
-    let intents = GatewayIntents::GUILD_MESSAGES 
-        | GatewayIntents::DIRECT_MESSAGES
-        | GatewayIntents::MESSAGE_CONTENT;
+    let framework = poise::Framework::builder()
+        .setup(move |ctx, ready, framework| {
+            Box::pin(async move {
+                println!("Logged in as {}", ready.user.name);
+                poise::builtins::register_globally(ctx, &framework.options().commands).await?;
+                Ok(())
+            })
+        })
+        .options(options)
+        .build();
 
-    // Create a new instance of the Client, logged in as the bot.
-    let mut client = Client::builder(&token, intents).event_handler(Handler).await.expect("Err creating client");
+    let token = var("DISCORD_TOKEN")
+        .expect("Missing `DISCORD_TOKEN` env var, see README for more information.");
+    let intents =
+        serenity::GatewayIntents::non_privileged() | serenity::GatewayIntents::MESSAGE_CONTENT;
 
-    //Start a single shard and listen to events
-    if let Err(why) = client.start().await {
-        println!("Client error: {why:?}");
-    }
+    let client = serenity::ClientBuilder::new(token, intents)
+        .framework(framework)
+        .await;
+
+    client.unwrap().start().await.unwrap()
 }
