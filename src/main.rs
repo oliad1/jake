@@ -21,9 +21,13 @@ pub struct City {
   country: String,
 }
 
+#[derive(sqlx::FromRow, Debug, Clone, serde::Serialize)]
+pub struct Term {
+  display_name: String,
+}
+
 #[derive(sqlx::FromRow, Debug, Clone)]
 pub struct Application {
-    term_id: i64,
     company_id: i64,
     job_title: String,
     url: String,
@@ -36,6 +40,7 @@ pub struct Application {
 
 #[derive(Debug, Clone)]
 pub struct ScrapeEvent {
+    terms: Option<Vec<Term>>,
     cities: Vec<City>,
     application: Application,
 }

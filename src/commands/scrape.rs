@@ -27,8 +27,6 @@ pub async fn scrape(
 
     let company_id_map: HashMap<i64, Company> = companies.iter().map(|c| (c.id, c.clone())).collect();
 
-    println!("COMPANIES: {:?}", companies);
-
     let application_rows: Vec<(i64, Vec<String>)> = sqlx::query_as(r#"
             SELECT
                 c.id,
@@ -62,12 +60,11 @@ pub async fn scrape(
         };
     }
 
-    while let Some(ScrapeEvent { cities, application }) = rx.recv().await {
+    while let Some(ScrapeEvent { terms, cities, application }) = rx.recv().await {
         //first insert to DB then send on Discord
         let _ = sqlx::query!(r#"
                 WITH application_row AS (
                     INSERT INTO applications (
-                      term_id,
                       company_id,
                       job_title,
                       url,
@@ -83,15 +80,16 @@ pub async fn scrape(
                       $4,
                       $5,
                       $6,
-                      $7,
-                      $8
+                      $7
                     )
                     RETURNING id
                 ),
 
+                -- Inserting cities
+
                 input_cities AS (
                     SELECT display_name, region, country
-                    FROM jsonb_to_recordset($9::jsonb) AS t(display_name text, region text, country text)
+                    FROM jsonb_to_recordset($8::jsonb) AS t(display_name text, region text, country text)
                 ),
 
                 new_cities AS (
@@ -117,8 +115,35 @@ pub async fn scrape(
                         nc.id
                     FROM application_row AS ar
                     CROSS JOIN new_cities AS nc
-                )
+                ),
 
+                -- Inserting terms
+                input_terms AS (
+                    SELECT display_name
+                    FROM jsonb_to_recordset($9::jsonb) AS t(display_name text)
+                ),
+
+                new_terms AS (
+                    INSERT INTO terms (display_name)
+                    SELECT display_name
+                    FROM input_terms AS it
+                    ON CONFLICT (display_name) DO UPDATE
+                        SET display_name = EXCLUDED.display_name
+                    RETURNING id
+                ),
+
+                new_application_terms AS (
+                    INSERT INTO application_terms (
+                        application_id,
+                        term_id
+                    )
+                    SELECT
+                        ar.id,
+                        nt.id
+                    FROM application_row AS ar
+                    CROSS JOIN new_terms AS nt
+                )
+                
                 INSERT INTO application_events (
                   application_id,
                   after_state
@@ -128,7 +153,6 @@ pub async fn scrape(
                     'ACTIVE'
                 FROM application_row AS ar
                 "#,
-                application.term_id,
                 application.company_id,
                 application.job_title,
                 application.url,
@@ -136,7 +160,8 @@ pub async fn scrape(
                 application.lower_wage_cents,
                 application.upper_wage_cents,
                 application.currency,
-                serde_json::to_value(&cities)?
+                serde_json::to_value(&cities)?,
+                serde_json::to_value(&terms)?
                     )
                     .execute(&ctx.data().pool).await?;
 
@@ -152,25 +177,32 @@ pub async fn scrape(
             cities_text.push_str(format!(" (+{} more)", cities.len() - 1).as_str());
         }
 
+        let mut term_text = String::new();
+        
+        if let Some(terms_list) = terms {
+            term_text = terms_list.into_iter()
+                .map(|t| t.display_name)
+                .collect::<Vec<String>>()
+                .join(", ");
+        };
+
         let description = if application.upper_wage_cents.is_some() {
-            format!("${}-${}/hr ({}) • {}",
+            format!("${}-${}/hr ({})",
                 (application.lower_wage_cents / 100),
                 (application.upper_wage_cents.unwrap() / 100),
-                application.currency,
-                cities_text
+                application.currency
             )
         } else {
-            format!("${}/hr ({}) • {}", 
+            format!("${}/hr ({})", 
                 (application.lower_wage_cents / 100),
-                application.currency,
-                cities_text
+                application.currency
             )
         };
 
         let response = CreateReply::default()
             .embed(
                 serenity::CreateEmbed::new()
-                .title(format!("{} - {}", application.term_id, application.job_title)) // need to fix this, add field
+                .title(format!("{} - {}", &term_text, application.job_title)) // need to fix this, add field
                 .url(application.url)
                 .author(
                     serenity::CreateEmbedAuthor::new(&company.display_name)
@@ -178,7 +210,9 @@ pub async fn scrape(
                     .icon_url(company.icon_url)
                 )
                 .colour(serenity::Colour::from(u32::from_str_radix(&company.hex_code.replace("#", ""), 16).unwrap_or(0)))
-                .description(description)
+                .field("Compensation", &description, true)
+                .field("Location(s)", &cities_text, true)
+                .description(&application.page_content)
             ).components(vec![
                 serenity::CreateActionRow::Buttons(vec![
                     serenity::CreateButton::new("applied")
@@ -190,7 +224,7 @@ pub async fn scrape(
                 ])
             ]);
 
-        //TODO: New fields: thread_id, terms table (term_id, job_id)
+        //TODO: New fields: thread_id
 
         let reply_handle = ctx.send(response).await?;
         let message = reply_handle.message().await?;

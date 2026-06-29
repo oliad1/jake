@@ -2,7 +2,7 @@
 //Scrape main job listings, keep sending channel messages (tx) until we reach a job we've already
 //seen
 
-use crate::{Error, Application, ScrapeEvent, City};
+use crate::{Error, Application, ScrapeEvent, City, Term};
 use scraper::{Html, Selector};
 use tokio::sync::mpsc::Sender;
 use std::collections::HashSet;
@@ -72,11 +72,13 @@ async fn single_job(
 
         let location_selector = Selector::parse("div.KwJkGe > div > div > span.MyVLbf > b").unwrap();
 
-        let mut page_content = "".to_owned();
+        let description_selector = Selector::parse("div.aG5W3 > p:nth-child(2)").unwrap();
+
+        let mut page_content = String::new();
 
         // format is usually: Job Title, BS/MS/PHD, Term
         let header_html = card.select(&title_selector).next().unwrap().inner_html();
-        page_content.push_str(&header_html);
+        //page_content.push_str(&header_html);
         let mut header = header_html.split(",");
 
         let title = header.next().unwrap();
@@ -116,9 +118,14 @@ async fn single_job(
 
         let location_text = card.select(&location_selector).next().unwrap().inner_html();
         let locations: Vec<String> = location_text.split("; ").map(String::from).collect();
+
+        //description
+        page_content = card.select(&description_selector).next().unwrap().inner_html().to_string();
     
         //Winter/Summer 2026
         let total_term = header.next().unwrap();
+
+        let mut terms: Vec<Term> = Vec::new();
         
         //[Winter/Summer] [2026]
         let mut term = total_term.split(" ");
@@ -127,20 +134,34 @@ async fn single_job(
         term.next().unwrap();
 
         //W/S
-        let mut abbr_term = term.next().unwrap()
-            .replace("Winter", "W")
-            .replace("Summer", "S")
-            .replace("Spring", "P")
-            .replace("Fall", "F");
+        let abbr_term = term.next().unwrap();
 
         //26
         let year = term.next().unwrap().replace("20", "");
+        
+        if abbr_term.contains("Winter") {
+            terms.push(Term {
+                display_name: format!("W{}", &year)
+            });
+        }
 
-        //W/S26
-        abbr_term.push_str(&year);
+        if abbr_term.contains("Summer") {
+            terms.push(Term {
+                display_name: format!("S{}", &year)
+            });
+        }
 
-        //W/F 2026 => W/F 26, W26, F26
-        let final_term = abbr_term.replace("/", format!("{}, ", &year).as_str());
+        if abbr_term.contains("Spring") {
+            terms.push(Term {
+                display_name: format!("P{}", &year)
+            });
+        }
+
+        if abbr_term.contains("Fall") {
+            terms.push(Term {
+                display_name: format!("F{}", &year)
+            });
+        }
 
         //need to match term like Winter/Summer 2026 => [Winter, Summer, 2026?]
         let mut cities: Vec<City> = Vec::new();
@@ -155,11 +176,10 @@ async fn single_job(
         }
 
         let application = Application {
-            term_id: 1,
             company_id,
             job_title: title.to_string(),
             url: url,
-            page_content: "".to_string(),
+            page_content,
             lower_wage_cents: lower,
             upper_wage_cents: upper,
             state: "ACTIVE".to_string(),
@@ -167,6 +187,7 @@ async fn single_job(
         };
 
         ScrapeEvent {
+            terms: Some(terms),
             cities,
             application
         }
