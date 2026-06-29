@@ -7,6 +7,6 @@ INSERT INTO companies (
 VALUES (
   'Google',
   'https://about.google/',
-  '#FBBC05',
+  '#FFFFFF',
   'https://www.google.com/favicon.ico'
 );
