@@ -4,6 +4,7 @@ use std::{collections::{HashMap, HashSet}};
 use tokio::sync::mpsc;
 use poise::serenity_prelude as serenity;
 use poise::reply::CreateReply;
+use poise::futures_util::StreamExt;
 
 #[poise::command(slash_command)]
 pub async fn scrape(
@@ -212,7 +213,7 @@ pub async fn scrape(
                 .colour(serenity::Colour::from(u32::from_str_radix(&company.hex_code.replace("#", ""), 16).unwrap_or(0)))
                 .field("Compensation", &description, true)
                 .field("Location(s)", &cities_text, true)
-                .description(&application.page_content)
+                .description(format!("{}...", &application.page_content.chars().take(214).collect::<String>()))
             ).components(vec![
                 serenity::CreateActionRow::Buttons(vec![
                     serenity::CreateButton::new("applied")
@@ -224,39 +225,64 @@ pub async fn scrape(
                 ])
             ]);
 
-        //TODO: New fields: thread_id
-
+        //TODO: New fields: thread_id & graceful startup that picks up tokio threads / interaction
+        //listeners, /update NEW_STATE command?
+        
         let reply_handle = ctx.send(response).await?;
         let message = reply_handle.message().await?;
 
-        let title = format!("{} @ {}", message.embeds.first().unwrap().title.clone().unwrap(), company.display_name);
+        let title = format!("{} @ {}",
+            message.embeds.first().unwrap().title.clone().unwrap(),
+            company.display_name
+        );
+
+        let serenity_context = ctx.serenity_context().clone();
+        let mut interaction_stream = message
+            .await_component_interaction(&serenity_context)
+            .author_id(ctx.author().id)
+            .stream();
+        let channel_id = ctx.channel_id();
+        let http = ctx.serenity_context().http.clone();
+        let message_id = message.id;
         
-        while let Some(press) = message.await_component_interaction(&ctx).author_id(ctx.author().id).next().await
-        {
-            let action = press.data.custom_id.as_str();
+        tokio::spawn(async move {
+            while let Some(press) = interaction_stream.next().await
+            {
+                let action = press.data.custom_id.as_str();
 
-            match action {
-                "applied" | "ignored"  => {
-                    let _ = press.create_response(
-                        &ctx.serenity_context().http,
-                        serenity::CreateInteractionResponse::UpdateMessage(
-                            serenity::CreateInteractionResponseMessage::new().components(vec![])
-                        )
-                    ).await;
+                match action {
+                    "applied" | "ignored"  => {
+                        let _ = press.create_response(
+                            &http,
+                            serenity::CreateInteractionResponse::UpdateMessage(
+                                serenity::CreateInteractionResponseMessage::new().components(vec![])
+                            )
+                        ).await;
 
-                    let thread_builder = serenity::CreateThread::new(&title)
-                        .kind(serenity::ChannelType::PublicThread);
+                        if action == "applied" {
+                            let thread_builder = serenity::CreateThread::new(&title)
+                                .kind(serenity::ChannelType::PublicThread);
 
-                    let thread_channel = ctx.channel_id()
-                        .create_thread_from_message(ctx.serenity_context(), message.id, thread_builder.to_owned())
-                        .await?;
+                            let thread_channel = channel_id
+                                .create_thread_from_message(
+                                    &serenity_context, 
+                                    message_id,
+                                    thread_builder.to_owned()
+                                )
+                                .await;
 
-                    thread_channel.say(ctx.serenity_context(), action).await?;
-                }
-                _ => println!("Unknown interaction type")
-            };
-
-        }
+                            if let Ok(thread_c) = thread_channel {
+                                let _ = thread_c.say(&serenity_context, action).await;
+                            }
+                        }
+                    }
+                    _ => println!("Unknown interaction type: `{:?}`", action)
+                };
+                
+                // exit the while loop and kill the tokio thread
+                break;
+            }
+        });
     }
 
 

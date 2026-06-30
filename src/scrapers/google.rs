@@ -66,19 +66,27 @@ async fn single_job(
 
         let card = document.select(&card_selector).next().unwrap();
 
+        let alert_selector = Selector::parse("div.KwJkGe > div").unwrap();
+
+        let min_qual_selector = Selector::parse("div.KwJkGe > ul:nth-child(4) > li").unwrap();
+
+        let pref_qual_selector = Selector::parse("div.KwJkGe > ul:nth-child(7) > li").unwrap();
+
+        let first_loc_selector = Selector::parse("div.op1BBf > span.pwO9Dc.vo5qdf > span:nth-child(2)").unwrap();
+
         let title_selector = Selector::parse("h2").unwrap();
 
         let compensation_selector = Selector::parse("div.aG5W3 > p:nth-child(7)").unwrap();
 
-        let location_selector = Selector::parse("div.KwJkGe > div > div > span.MyVLbf > b").unwrap();
+        let locations_selector = Selector::parse("div.KwJkGe > div > div > span.MyVLbf > b").unwrap();
 
-        let description_selector = Selector::parse("div.aG5W3 > p:nth-child(2)").unwrap();
+        let about_the_job_selector = Selector::parse("div.aG5W3 > p").unwrap();
 
-        let mut page_content = String::new();
+        let responsibilities_selector = Selector::parse("div.BDNOWe > ul > li").unwrap();
 
         // format is usually: Job Title, BS/MS/PHD, Term
         let header_html = card.select(&title_selector).next().unwrap().inner_html();
-        //page_content.push_str(&header_html);
+        let mut page_content = "".to_string();
         let mut header = header_html.split(",");
 
         let title = header.next().unwrap();
@@ -116,12 +124,47 @@ async fn single_job(
         //currency
         let currency = compensation_text.next().unwrap().to_string();
 
-        let location_text = card.select(&location_selector).next().unwrap().inner_html();
-        let locations: Vec<String> = location_text.split("; ").map(String::from).collect();
+        let alert_card = card.select(&alert_selector).next();
+        
+        let locations: Vec<String> = if alert_card.is_some() {
+            // if the alert container is there then we know there are multiple locations
+            let location_text = card.select(&locations_selector).next().unwrap().inner_html();
+            location_text.split("; ").map(String::from).collect()
+        } else {
+            let first_loc = card.select(&first_loc_selector).next().unwrap().inner_html();
+            page_content.push_str(&first_loc);
+            vec![first_loc]
+        };
 
-        //description
-        page_content = card.select(&description_selector).next().unwrap().inner_html().to_string();
-    
+        //alert card
+        if let Some(alert_text) = alert_card {
+            page_content.push_str(&alert_text.value().attr("data-liveregiontext").unwrap().replace("Info ", ""));
+        }
+
+        page_content.push_str("Minimum qualifications:\n");
+        
+        for li in card.select(&min_qual_selector) {
+            page_content.push_str(format!("- {}\n", li.inner_html()).as_str());
+        }
+
+        page_content.push_str("Preferred qualifications:\n");
+
+        for li in card.select(&pref_qual_selector) {
+            page_content.push_str(format!("- {}\n", li.inner_html()).as_str());
+        }
+
+        page_content.push_str("About the job\n");
+
+        for p in card.select(&about_the_job_selector) {
+            page_content.push_str(format!("- {}\n", p.inner_html()).as_str());
+        }
+
+        page_content.push_str("Responsibilities");
+
+        for li in card.select(&responsibilities_selector) {
+            page_content.push_str(format!("- {}\n", li.inner_html()).as_str());
+        }
+
         //Winter/Summer 2026
         let total_term = header.next().unwrap();
 
