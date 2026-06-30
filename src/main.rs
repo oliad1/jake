@@ -73,7 +73,6 @@ async fn main() -> Result<(), Error> {
     dotenvy::dotenv().ok();
 
     //Set up DB conn
-    
     let conn_str = var("DATABASE_URL").expect("Missing `DATABASE_URL` env var, see README for more information");
     let pool = sqlx::PgPool::connect(&conn_str).await?;
 
@@ -90,12 +89,54 @@ async fn main() -> Result<(), Error> {
                 println!("Executed command {}!", ctx.command().qualified_name);
             })
         },
-        event_handler: |_ctx, event, _framework, _data| {
+        event_handler: |ctx, event, _framework, _data| {
             Box::pin(async move {
                 println!(
                     "Got an event in event handler: {:?}",
                     event.snake_case_name()
                 );
+
+                match event {
+                    serenity::FullEvent::InteractionCreate { interaction: serenity::Interaction::Component(data) } => {
+                        let action = data.data.custom_id.as_str();
+                        let embed = data.message.embeds.first().unwrap();
+                        let company_name = embed.author.clone().unwrap().name;
+                        let title = format!("{} @ {}", embed.title.clone().unwrap(), company_name);
+                        let message_id = data.message.id;
+
+                        match action {
+                            "applied" | "ignored"  => {
+                                let _ = data.create_response(
+                                    ctx,
+                                    serenity::CreateInteractionResponse::UpdateMessage(
+                                        serenity::CreateInteractionResponseMessage::new().components(vec![])
+                                    )
+                                ).await;
+
+                                if action == "applied" {
+                                    let thread_builder = serenity::CreateThread::new(&title)
+                                        .kind(serenity::ChannelType::PublicThread);
+
+                                    let thread_channel = data.channel.clone().unwrap().id
+                                        .create_thread_from_message(
+                                            ctx, 
+                                            message_id,
+                                            thread_builder.to_owned()
+                                        )
+                                        .await;
+
+                                    if let Ok(thread_c) = thread_channel {
+                                        let _ = thread_c.say(ctx, action).await;
+                                    }
+                                }
+                            }
+                            _ => println!("Unknown interaction type: `{:?}`", action)
+                        }
+                    }
+
+                    _ => {}
+                }
+
                 Ok(())
             })
         },
