@@ -60,110 +60,12 @@ pub async fn scrape(
         };
     }
 
+    drop(tx);
+
+    let mut processed_anything = false;
+
     while let Some(ScrapeEvent { terms, cities, application }) = rx.recv().await {
-        //first insert to DB then send on Discord
-        let _ = sqlx::query!(r#"
-                WITH application_row AS (
-                    INSERT INTO applications (
-                      company_id,
-                      job_title,
-                      url,
-                      page_content,
-                      lower_wage_cents,
-                      upper_wage_cents,
-                      currency
-                    )
-                    VALUES (
-                      $1,
-                      $2,
-                      $3,
-                      $4,
-                      $5,
-                      $6,
-                      $7
-                    )
-                    RETURNING id
-                ),
-
-                -- Inserting cities
-
-                input_cities AS (
-                    SELECT display_name, region, country
-                    FROM jsonb_to_recordset($8::jsonb) AS t(display_name text, region text, country text)
-                ),
-
-                new_cities AS (
-                    INSERT INTO cities (
-                        display_name,
-                        region,
-                        country
-                    )
-                    SELECT display_name, region, country
-                    FROM input_cities AS ic
-                    ON CONFLICT (display_name, region, country) DO UPDATE
-                        SET display_name = EXCLUDED.display_name
-                    RETURNING id
-                ),
-
-                new_application_cities AS (
-                    INSERT INTO application_cities (
-                        application_id,
-                        city_id
-                    )
-                    SELECT
-                        ar.id,
-                        nc.id
-                    FROM application_row AS ar
-                    CROSS JOIN new_cities AS nc
-                ),
-
-                -- Inserting terms
-                input_terms AS (
-                    SELECT display_name
-                    FROM jsonb_to_recordset($9::jsonb) AS t(display_name text)
-                ),
-
-                new_terms AS (
-                    INSERT INTO terms (display_name)
-                    SELECT display_name
-                    FROM input_terms AS it
-                    ON CONFLICT (display_name) DO UPDATE
-                        SET display_name = EXCLUDED.display_name
-                    RETURNING id
-                ),
-
-                new_application_terms AS (
-                    INSERT INTO application_terms (
-                        application_id,
-                        term_id
-                    )
-                    SELECT
-                        ar.id,
-                        nt.id
-                    FROM application_row AS ar
-                    CROSS JOIN new_terms AS nt
-                )
-                
-                INSERT INTO application_events (
-                  application_id,
-                  after_state
-                )
-                SELECT
-                    ar.id,
-                    'ACTIVE'
-                FROM application_row AS ar
-                "#,
-                application.company_id,
-                application.job_title,
-                application.url,
-                application.page_content,
-                application.lower_wage_cents,
-                application.upper_wage_cents,
-                application.currency,
-                serde_json::to_value(&cities)?,
-                serde_json::to_value(&terms)?
-                    )
-                    .execute(&ctx.data().pool).await?;
+        processed_anything = true;
 
         let company = company_id_map.get(&application.company_id).unwrap().to_owned();
 
@@ -179,9 +81,9 @@ pub async fn scrape(
 
         let mut term_text = String::new();
         
-        if let Some(terms_list) = terms {
+        if let Some(terms_list) = &terms {
             term_text = terms_list.into_iter()
-                .map(|t| t.display_name)
+                .map(|t| t.display_name.clone())
                 .collect::<Vec<String>>()
                 .join(", ");
         };
@@ -202,8 +104,8 @@ pub async fn scrape(
         let response = CreateReply::default()
             .embed(
                 serenity::CreateEmbed::new()
-                .title(format!("{} - {}", &term_text, application.job_title)) // need to fix this, add field
-                .url(application.url)
+                .title(format!("{} - {}", &term_text, application.job_title))
+                .url(&application.url)
                 .author(
                     serenity::CreateEmbedAuthor::new(&company.display_name)
                     .url(company.url)
@@ -215,17 +117,127 @@ pub async fn scrape(
                 .description(format!("{}...", &application.page_content.chars().take(214).collect::<String>()))
             ).components(vec![
                 serenity::CreateActionRow::Buttons(vec![
-                    serenity::CreateButton::new("applied")
-                        .label("Applied")
+                    serenity::CreateButton::new("ACTIVE")
+                        .label("Apply")
                         .style(serenity::ButtonStyle::Secondary),
-                    serenity::CreateButton::new("ignored")
-                        .label("Ignored")
+                    serenity::CreateButton::new("IGNORED")
+                        .label("Ignore")
                         .style(serenity::ButtonStyle::Secondary),
                 ])
             ]);
 
         let reply_handle = ctx.send(response).await?;
-        reply_handle.message().await?;
+        let message_id = reply_handle.message().await?.id.get();
+
+        let _ = sqlx::query!(r#"
+            WITH application_row AS (
+                INSERT INTO applications (
+                  company_id,
+                  job_title,
+                  url,
+                  page_content,
+                  lower_wage_cents,
+                  upper_wage_cents,
+                  currency,
+                  thread_id
+                )
+                VALUES (
+                  $1,
+                  $2,
+                  $3,
+                  $4,
+                  $5,
+                  $6,
+                  $7,
+                  $10
+                )
+                RETURNING id
+            ),
+
+            -- Inserting cities
+
+            input_cities AS (
+                SELECT display_name, region, country
+                FROM jsonb_to_recordset($8::jsonb) AS t(display_name text, region text, country text)
+            ),
+
+            new_cities AS (
+                INSERT INTO cities (
+                    display_name,
+                    region,
+                    country
+                )
+                SELECT display_name, region, country
+                FROM input_cities AS ic
+                ON CONFLICT (display_name, region, country) DO UPDATE
+                    SET display_name = EXCLUDED.display_name
+                RETURNING id
+            ),
+
+            new_application_cities AS (
+                INSERT INTO application_cities (
+                    application_id,
+                    city_id
+                )
+                SELECT
+                    ar.id,
+                    nc.id
+                FROM application_row AS ar
+                CROSS JOIN new_cities AS nc
+            ),
+
+            -- Inserting terms
+            input_terms AS (
+                SELECT display_name
+                FROM jsonb_to_recordset($9::jsonb) AS t(display_name text)
+            ),
+
+            new_terms AS (
+                INSERT INTO terms (display_name)
+                SELECT display_name
+                FROM input_terms AS it
+                ON CONFLICT (display_name) DO UPDATE
+                    SET display_name = EXCLUDED.display_name
+                RETURNING id
+            ),
+
+            new_application_terms AS (
+                INSERT INTO application_terms (
+                    application_id,
+                    term_id
+                )
+                SELECT
+                    ar.id,
+                    nt.id
+                FROM application_row AS ar
+                CROSS JOIN new_terms AS nt
+            )
+            
+            INSERT INTO application_events (
+              application_id,
+              after_state
+            )
+            SELECT
+                ar.id,
+                'ACTIVE'
+            FROM application_row AS ar
+                "#,
+                application.company_id,
+                application.job_title,
+                application.url,
+                application.page_content,
+                application.lower_wage_cents,
+                application.upper_wage_cents,
+                application.currency,
+                serde_json::to_value(&cities)?,
+                serde_json::to_value(&terms)?,
+                message_id as i64
+            )
+            .execute(&ctx.data().pool).await?;
+    }
+
+    if !processed_anything {
+        ctx.say("No new jobs were found.").await?;
     }
 
     Ok(())

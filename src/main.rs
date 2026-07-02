@@ -36,6 +36,7 @@ pub struct Application {
     upper_wage_cents: Option<i16>, // There could be no range
     state: String, // ACTIVE, SUBMITTED, REJECTED, DELETED, IGNORED
     currency: String, 
+    thread_id: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -77,7 +78,7 @@ async fn main() -> Result<(), Error> {
     let pool = sqlx::PgPool::connect(&conn_str).await?;
 
     let options = poise::FrameworkOptions {
-        commands: vec![commands::scrape::scrape()],
+        commands: vec![commands::scrape::scrape(), commands::update::update()],
         on_error: |error| Box::pin(on_error(error)),
         pre_command: |ctx| {
             Box::pin(async move {
@@ -89,7 +90,7 @@ async fn main() -> Result<(), Error> {
                 println!("Executed command {}!", ctx.command().qualified_name);
             })
         },
-        event_handler: |ctx, event, _framework, _data| {
+        event_handler: |ctx, event, _framework, shared_data| {
             Box::pin(async move {
                 println!(
                     "Got an event in event handler: {:?}",
@@ -105,7 +106,7 @@ async fn main() -> Result<(), Error> {
                         let message_id = data.message.id;
 
                         match action {
-                            "applied" | "ignored"  => {
+                            "ACTIVE" | "IGNORED"  => {
                                 let _ = data.create_response(
                                     ctx,
                                     serenity::CreateInteractionResponse::UpdateMessage(
@@ -113,7 +114,7 @@ async fn main() -> Result<(), Error> {
                                     )
                                 ).await;
 
-                                if action == "applied" {
+                                if action == "ACTIVE" {
                                     let thread_builder = serenity::CreateThread::new(&title)
                                         .kind(serenity::ChannelType::PublicThread);
 
@@ -126,8 +127,10 @@ async fn main() -> Result<(), Error> {
                                         .await;
 
                                     if let Ok(thread_c) = thread_channel {
-                                        let _ = thread_c.say(ctx, action).await;
+                                        let _ = thread_c.say(ctx, "Starting application... Good luck!").await;
                                     }
+                                } else {
+                                    let _ = commands::update::update_application_state(&shared_data.pool, data.message.id.get(), "IGNORED").await;
                                 }
                             }
                             _ => println!("Unknown interaction type: `{:?}`", action)

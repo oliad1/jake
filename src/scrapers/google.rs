@@ -170,7 +170,7 @@ async fn single_job(
 
         let mut terms: Vec<Term> = Vec::new();
         
-        //[Winter/Summer] [2026]
+        //[ ], [Winter/Summer], [2026]
         let mut term = total_term.split(" ");
         
         //skip the empty space at the start
@@ -226,7 +226,8 @@ async fn single_job(
             lower_wage_cents: lower,
             upper_wage_cents: upper,
             state: "ACTIVE".to_string(),
-            currency: currency
+            currency: currency,
+            thread_id: None
         };
 
         ScrapeEvent {

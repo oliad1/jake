@@ -1,0 +1,2 @@
+ALTER TABLE applications
+ADD thread_id BIGINT NOT NULL UNIQUE;
