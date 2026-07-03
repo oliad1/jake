@@ -6,6 +6,7 @@ use crate::{Error, Application, ScrapeEvent, City, Term};
 use scraper::{Html, Selector};
 use tokio::sync::mpsc::Sender;
 use std::collections::HashSet;
+use futures::future::join_all;
 
 pub async fn main(
     company_id: i64,
@@ -41,11 +42,13 @@ pub async fn main(
         temp_urls
     };
 
-    for url in scraped_urls {
+    let tasks = scraped_urls.into_iter().map(|url| {
         let tx_clone = tx.clone();
 
-        single_job(company_id, tx_clone, url).await?;
-    }
+        single_job(company_id, tx_clone, url)
+    });
+
+    let _ = join_all(tasks).await;
 
     drop(tx);
 
@@ -181,29 +184,15 @@ async fn single_job(
 
         //26
         let year = term.next().unwrap().replace("20", "");
-        
-        if abbr_term.contains("Winter") {
-            terms.push(Term {
-                display_name: format!("W{}", &year)
-            });
-        }
 
-        if abbr_term.contains("Summer") {
-            terms.push(Term {
-                display_name: format!("S{}", &year)
-            });
-        }
+        let seasons = [("Winter", "W"), ("Summer", "S"), ("Fall", "F"), ("Spring", "P")];
 
-        if abbr_term.contains("Spring") {
-            terms.push(Term {
-                display_name: format!("P{}", &year)
-            });
-        }
-
-        if abbr_term.contains("Fall") {
-            terms.push(Term {
-                display_name: format!("F{}", &year)
-            });
+        for (season, prefix) in seasons {
+            if abbr_term.contains(season) {
+                terms.push(Term {
+                    display_name: format!("{}{}", prefix, &year)
+                });
+            }
         }
 
         //need to match term like Winter/Summer 2026 => [Winter, Summer, 2026?]
