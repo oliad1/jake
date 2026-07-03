@@ -56,6 +56,13 @@ pub async fn scrape(
                     tx_clone
                 ).await?;
             }
+            "Amazon" => {
+                scrapers::amazon::main(
+                    company.id,
+                    company_url_map.get(&company.id).unwrap_or(&HashSet::<String>::new()).clone(),
+                    tx_clone
+                ).await?;
+            }
             _ => { panic!("Unknown company"); }
         };
     }
