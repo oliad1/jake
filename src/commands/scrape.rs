@@ -45,26 +45,33 @@ pub async fn scrape(
 
     let (tx, mut rx) = mpsc::channel::<ScrapeEvent>(10);
 
+    let client = reqwest::Client::new();
+
     for company in companies {
         let tx_clone = tx.clone();
-
-        match company.display_name.as_str() {
-            "Google" => {
-                scrapers::google::main(
-                    company.id,
-                    company_url_map.get(&company.id).unwrap_or(&HashSet::<String>::new()).clone(),
-                    tx_clone
-                ).await?;
+        let client_clone = client.clone();
+        let company_url_map_clone = company_url_map.get(&company.id).unwrap_or(&HashSet::<String>::new()).clone();
+        
+        tokio::spawn(async move {
+            match company.display_name.as_str() {
+                "Google" => {
+                    scrapers::google::main(
+                        company.id,
+                        company_url_map_clone,
+                        tx_clone
+                    ).await
+                }
+                "Amazon" => {
+                    scrapers::amazon::main(
+                        company.id,
+                        company_url_map_clone,
+                        tx_clone,
+                        client_clone
+                    ).await
+                }
+                _ => { panic!("Unknown company"); }
             }
-            "Amazon" => {
-                scrapers::amazon::main(
-                    company.id,
-                    company_url_map.get(&company.id).unwrap_or(&HashSet::<String>::new()).clone(),
-                    tx_clone
-                ).await?;
-            }
-            _ => { panic!("Unknown company"); }
-        };
+        });
     }
 
     drop(tx);

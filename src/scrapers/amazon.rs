@@ -1,72 +1,27 @@
 use crate::{Error, Application, ScrapeEvent, City, Term};
 use tokio::sync::mpsc::Sender;
-use std::collections::{HashSet, HashMap};
+use std::collections::{HashSet};
 use serde::Deserialize;
 use serde_json::json;
+use reqwest::Client;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all="camelCase")]
 struct Location {
-    normalized_state_name: String, //British Columbia,
-    normalized_country_code: String, //CAN,
     city: String, //Vancouver,
-    country_iso_3a: String, //CAN,
-    country_iso_2a: String, //CA,
-    location_non_stemming: String, //Canada, BC, Vancouver,
-    //coordinates: (f32, f32), //49.26038,-123.11336,
-    normalized_county_name: String, //Metro Vancouver,
-    //type: String, //ONSITE,
-    normalized_country_name: String, //Canada,
-    normalized_location: String, //Vancouver, British Columbia, CAN
-    location: String, //CA, BC, Vancouver
+    country_iso_2a: String, //CA
     region: String, //BC
-    building_code_list: Vec<String>,
-    normalized_city_name: String
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all="camelCase")]
 struct SearchHint {
-    optional_search_labels: Option<Vec<String>>,
-    country: Option<Vec<String>>,
-    is_intern: Option<Vec<String>>,
-    normalized_country_code: Option<Vec<String>>,
-    art_job_id: Option<Vec<String>>,
-    city: Option<Vec<String>>,
-    country_iso_3a: Option<Vec<String>>,
-    source_system: Option<Vec<String>>,
-    company_name: Option<Vec<String>>,
-    primary_search_label: Option<Vec<String>>,
-    job_code: Option<Vec<String>>,
     description: Vec<String>,
-    is_tech: Option<Vec<String>>,
     basic_qualifications: Option<Vec<String>>,
-    updated_date: Option<Vec<String>>,
     title: Vec<String>,
-    normalized_location: Option<Vec<String>>,
-    job_function_id: Option<Vec<String>>,
-    is_manager: Option<Vec<String>>,
-    job_role: Option<Vec<String>>,
-    job_family: Option<Vec<String>>,
-    normalized_state_name: Option<Vec<String>>,
-    schedule_type_id: Option<Vec<String>>,
-    normalized_city_name: Option<Vec<String>>,
-    employee_class: Option<Vec<String>>,
     preferred_qualifications: Vec<String>,
-    is_confidential: Option<Vec<String>>,
-    is_unsearchable: Option<Vec<String>>,
-    short_description: Option<Vec<String>>,
-    role_fungibility: Option<Vec<String>>,
-    central_recruitment_team: Option<Vec<String>>,
-    created_date: Option<Vec<String>>,
-    team_category: Option<Vec<String>>,
-    url_next_step: Option<Vec<String>>,
-    business_category: Option<Vec<String>>,
     location: Option<Vec<String>>,
     locations: Option<Vec<String>>,
-    region: Option<Vec<String>>,
-    category: Option<Vec<String>>,
-    hire_type_id: Option<Vec<String>>,
     icims_job_id: Vec<String>,
 }
 
@@ -78,19 +33,12 @@ struct HintWrapper {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all="camelCase")]
 struct AmazonRes {
-    _found: i64,
-    _start: i64,
     search_hits: Vec<HintWrapper>
 }
 
-pub async fn main(
-    company_id: i64,
-    urls: HashSet<String>,
-    tx: Sender<ScrapeEvent>
-) -> Result<(), Error> {
-    let client = reqwest::Client::new();
-
-    let map = json!({
+fn get_req(
+)->serde_json::Value {
+    json!({
         "accessLevel": "EXTERNAL",
         "contentFilterFacets": [{
             "name": "primarySearchLabel",
@@ -99,7 +47,8 @@ pub async fn main(
         }],
         "excludeFacets": [
             { "name": "isConfidential", "values": [{ "name": "1" }] },
-            { "name": "businessCategory", "values": [{ "name": "a-confidential-job" }] }
+            { "name": "businessCategory", "values": [{ "name": "a-confidential-job" }] },
+            { "name": "optionalSearchLabels", "values": [{ "name": "military-spouse" }, { "name": "military-tech" }, { "name": "military-na" }, { "name": "ops.lander-military-skillbridge" }, { "name": "military" }, { "name": "military-skillbridge" }, { "name": "military-student" }, { "name": "aws.team-clearedvets" }] }
         ],
         "filterFacets": [{
             "name": "category",
@@ -118,7 +67,16 @@ pub async fn main(
             "sortOrder": "DESCENDING",
             "sortType": "CREATED_DATE"
         }
-    });
+    })
+}
+
+pub async fn main(
+    company_id: i64,
+    urls: HashSet<String>,
+    tx: Sender<ScrapeEvent>,
+    client: Client
+) -> Result<(), Error> {
+    let map = get_req();
 
     let res = client.post("https://amazon.jobs/api/jobs/search?is_als=true")
         .json(&map)
@@ -136,35 +94,34 @@ pub async fn main(
 
         let title = hit.fields.title.first().unwrap();
 
-        //26
-        //TODO: Handle year parsing, clean up job title (remove dates like Fall 2026 and places
-        //like '(Canada)' or '(US)', remove the word 'Internship')
-        let year = 26;
+        //if 2027/2026 is contained then use that, else fallback to nearest cycle
+        let year = if title.contains("2026") { 26 } else { 27 };
+
+        let cleaned_title = title
+            .replace(" Internship", "")
+            .replace(" Intern", "")
+            .replace("US", "")
+            .replace("Canada", "")
+            .replace(" - ", "")
+            .replace("Fall", "")
+            .replace("Winter", "")
+            .replace("Summer", "")
+            .replace("Spring", "")
+            .replace("Spring", "")
+            .replace(&format!(" 20{}", year), "")
+            .replace("()", "");
+    
 
         let mut terms: Vec<Term> = Vec::new();
         
-        if title.contains("Winter") {
-            terms.push(Term {
-                display_name: format!("W{}", &year)
-            });
-        }
+        let seasons = [("Winter", "W"), ("Summer", "S"), ("Fall", "F"), ("Spring", "P")];
 
-        if title.contains("Summer") {
-            terms.push(Term {
-                display_name: format!("S{}", &year)
-            });
-        }
-
-        if title.contains("Spring") {
-            terms.push(Term {
-                display_name: format!("P{}", &year)
-            });
-        }
-
-        if title.contains("Fall") {
-            terms.push(Term {
-                display_name: format!("F{}", &year)
-            });
+        for (season, prefix) in seasons {
+            if title.contains(season) {
+                terms.push(Term {
+                    display_name: format!("{}{}", prefix, &year)
+                });
+            }
         }
 
         let cities: Vec<City> = if hit.fields.locations.is_some() {
@@ -250,7 +207,7 @@ pub async fn main(
 
         let application = Application {
             company_id,
-            job_title: title.to_string(),
+            job_title: cleaned_title.trim().to_string(),
             url: url,
             page_content: format!("{}\n{}\n{}",
                 hit.fields.description.first().unwrap(),
