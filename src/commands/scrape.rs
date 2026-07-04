@@ -45,7 +45,9 @@ pub async fn scrape(
 
     let (tx, mut rx) = mpsc::channel::<ScrapeEvent>(10);
 
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36")
+        .build()?;
 
     for company in companies {
         let tx_clone = tx.clone();
@@ -63,6 +65,14 @@ pub async fn scrape(
                 }
                 "Amazon" => {
                     scrapers::amazon::main(
+                        company.id,
+                        company_url_map_clone,
+                        tx_clone,
+                        client_clone
+                    ).await
+                }
+                "Jane Street" => {
+                    scrapers::jane_street::main(
                         company.id,
                         company_url_map_clone,
                         tx_clone,
