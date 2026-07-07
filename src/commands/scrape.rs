@@ -79,6 +79,14 @@ pub async fn scrape(
                         client_clone
                     ).await
                 }
+                "DoorDash" => {
+                    scrapers::doordash::main(
+                        company.id,
+                        company_url_map_clone,
+                        tx_clone,
+                        client_clone
+                    ).await
+                }
                 _ => { panic!("Unknown company"); }
             }
         });

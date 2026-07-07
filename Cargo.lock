@@ -972,6 +972,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "html-escape"
+version = "0.2.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "46c1ff2d1cbf39efe5af0900ced8a069b5e61557a17544eb0c4a50239937389e"
+
+[[package]]
 name = "html5ever"
 version = "0.39.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1253,6 +1259,7 @@ dependencies = [
  "dotenvy",
  "env",
  "futures",
+ "html-escape",
  "poise",
  "reqwest 0.13.4",
  "scraper",
@@ -2009,6 +2016,7 @@ dependencies = [
  "rustls-platform-verifier",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "sync_wrapper",
  "tokio",
  "tokio-rustls 0.26.4",
