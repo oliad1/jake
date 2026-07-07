@@ -87,6 +87,14 @@ pub async fn scrape(
                         client_clone
                     ).await
                 }
+                "Stripe" => {
+                    scrapers::stripe::main(
+                        company.id,
+                        company_url_map_clone,
+                        tx_clone,
+                        client_clone
+                    ).await
+                }
                 _ => { panic!("Unknown company"); }
             }
         });
@@ -118,6 +126,10 @@ pub async fn scrape(
                 .map(|t| t.display_name.clone())
                 .collect::<Vec<String>>()
                 .join(", ");
+
+            if terms_list.len() > 0 {
+                term_text = format!("{} - ", term_text);
+            }
         };
 
         let description = if application.upper_wage_cents.is_some() {
@@ -136,7 +148,7 @@ pub async fn scrape(
         let response = CreateReply::default()
             .embed(
                 serenity::CreateEmbed::new()
-                .title(format!("{} - {}", &term_text, application.job_title))
+                .title(format!("{}{}", &term_text, application.job_title))
                 .url(&application.url)
                 .author(
                     serenity::CreateEmbedAuthor::new(&company.display_name)
