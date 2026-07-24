@@ -79,11 +79,9 @@ async fn single_job(
 
         let title_selector = Selector::parse("h2").unwrap();
 
-        let compensation_selector = Selector::parse("div.aG5W3 > p:nth-child(7)").unwrap();
-
         let locations_selector = Selector::parse("div.KwJkGe > div > div > span.MyVLbf > b").unwrap();
 
-        let about_the_job_selector = Selector::parse("div.aG5W3 > p").unwrap();
+        let about_the_job_selector = Selector::parse("div.aG5W3").unwrap();
 
         let responsibilities_selector = Selector::parse("div.BDNOWe > ul > li").unwrap();
 
@@ -95,9 +93,13 @@ async fn single_job(
         let title = header.next().unwrap();
         header.next();
 
-        // US: $98000 - $131000 (USD)
+        //'About the job' text blob contains the compensation
+        let job_desc = card.select(&about_the_job_selector).next().unwrap().inner_html();
+
+        //Find the first instance of '$'
+        //Trim and split by -
         let compensation_html = card.select(&compensation_selector).next().unwrap().inner_html();
-        let uncleaned_compensation_text = compensation_html.replace(&['$', '(', ')'][..],"");
+        let uncleaned_compensation_text = compensation_html.replace(&['$', '(', ')', ','][..],"");
         let mut compensation_text = uncleaned_compensation_text.split(" ");
 
         // Skip the country 'US:'
