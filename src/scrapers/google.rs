@@ -79,11 +79,9 @@ async fn single_job(
 
         let title_selector = Selector::parse("h2").unwrap();
 
-        let compensation_selector = Selector::parse("div.aG5W3 > p:nth-child(7)").unwrap();
-
         let locations_selector = Selector::parse("div.KwJkGe > div > div > span.MyVLbf > b").unwrap();
 
-        let about_the_job_selector = Selector::parse("div.aG5W3 > p").unwrap();
+        let about_the_job_selector = Selector::parse("div.aG5W3").unwrap();
 
         let responsibilities_selector = Selector::parse("div.BDNOWe > ul > li").unwrap();
 
@@ -95,13 +93,25 @@ async fn single_job(
         let title = header.next().unwrap();
         header.next();
 
-        // US: $98000 - $131000 (USD)
-        let compensation_html = card.select(&compensation_selector).next().unwrap().inner_html();
-        let uncleaned_compensation_text = compensation_html.replace(&['$', '(', ')'][..],"");
-        let mut compensation_text = uncleaned_compensation_text.split(" ");
+        //'About the job' text blob contains the compensation
+        let job_desc = card.select(&about_the_job_selector).next().unwrap().inner_html();
 
-        // Skip the country 'US:'
-        compensation_text.next();
+        //Find the first instance of 'CAD ' || '$'
+        //Trim and split by - // what if there is no upper?
+        let mut currency = String::new();
+
+        let compensation_section = if job_desc.contains("CAD ") {
+            currency = "CAD".to_string();
+
+            job_desc.split("CAD ").nth(1).unwrap().split(", ").next().unwrap()
+        } else {
+            currency = "USD".to_string();
+
+            job_desc.split_once("$").unwrap().1.split(".").next().unwrap()
+        };
+
+        let uncleaned_compensation_text = compensation_section.replace(&['$', '(', ')', ','][..],"");
+        let mut compensation_text = uncleaned_compensation_text.split("-");
 
         let lower: i16 = (compensation_text.next()
             .unwrap()
@@ -110,12 +120,9 @@ async fn single_job(
             .unwrap() * 100 / (40 * 52)
         ).try_into().unwrap();
 
-        let upper: Option<i16> = if compensation_html.contains("-") {
-            // skip the dash
-            compensation_text.next();
+        let upper: Option<i16> = if let Some(val) = compensation_text.next() {
 
-            Some((compensation_text.next()
-                 .unwrap()
+            Some((val
                  .to_string()
                  .parse::<i64>()
                  .unwrap() * 100 / (40 * 52)
@@ -123,9 +130,6 @@ async fn single_job(
         } else {
             None
         };
-
-        //currency
-        let currency = compensation_text.next().unwrap().to_string();
 
         let alert_card = card.select(&alert_selector).next();
         
@@ -215,7 +219,7 @@ async fn single_job(
             lower_wage_cents: lower,
             upper_wage_cents: upper,
             state: "ACTIVE".to_string(),
-            currency: currency,
+            currency: currency.to_string(),
             thread_id: None
         };
 
