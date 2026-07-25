@@ -66,13 +66,17 @@ pub async fn main(
     let mut scraped_urls: Vec::<String> = Vec::new();
 
     for job in res.jobs {
+        let url = format!("{}/{}", JOB_LISTING_URL, job.id);
+
+        if urls.contains(&job.absolute_url) {
+            continue;
+        }
+
         if job.title.contains("Internship") || job.title.contains("Fellowship") {
-            scraped_urls.push(format!("{}/{}", JOB_LISTING_URL, job.id));
+            scraped_urls.push(url);
         }
     }
 
-    println!("scraped urls: {:?}", scraped_urls);
-    
     let tasks = scraped_urls.into_iter().map(|url| {
         let tx_clone = tx.clone();
         let client_clone = client.clone();
